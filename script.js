@@ -1,173 +1,142 @@
-// ===============================
-// JEWELS-AI AR VIDEO ENGINE v2.0
-// Aspect Ratio Fixed (No Squash)
-// ===============================
+/**
+ * JEWELS-AI | Google Drive AR Video Script
+ * Handles custom Chroma Key shader, Google Drive API fetching, and MindAR events.
+ */
 
-// --- 1. CONFIGURATION ---
+// --- CONFIGURATION ---
 const API_KEY = "AIzaSyC35sqqZA1YaxZ-F4PJaDqQpKBxPyMKOzw";
 const FOLDER_ID = "1fDj4lVzWcrXJnIQnljrC4-_SBEEV1dlz";
 
-const videoEl = document.querySelector('#plan1Video');
-const loadingMsg = document.querySelector('#loadingMsg');
-const entryBtn = document.querySelector('#entryBtn');
-const overlay = document.querySelector('#overlay');
-const sceneEl = document.querySelector('a-scene');
+const videoEl = document.querySelector('#driveVideo');
+const toast = document.querySelector('#status-toast');
+const buttonsContainer = document.querySelector('#planButtons');
 const toggleButton = document.querySelector('#toggleButton');
-const planButtons = document.querySelector('#planButtons');
-const videoDisplay = document.querySelector('#videoDisplay');
+const target = document.querySelector('#target1');
 
 let isPlaying = false;
 
-// ===============================
-// 2. FETCH LATEST VIDEO FROM DRIVE
-// ===============================
-async function loadLatestVideo() {
-
-    const listUrl = `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType+contains+'video/'&orderBy=createdTime+desc&fields=files(id,name)&key=${API_KEY}`;
-
-    try {
-        const listResponse = await fetch(listUrl);
-        const listData = await listResponse.json();
-
-        if (listData.files && listData.files.length > 0) {
-
-            const fileId = listData.files[0].id;
-
-            videoEl.src = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`;
-            videoEl.load();
-
-            loadingMsg.innerText = "Gift Ready!";
-            entryBtn.style.display = "inline-block";
-
-        } else {
-            loadingMsg.innerText = "No videos found in Drive.";
+// --- 1. CUSTOM ROUND CHROMA KEY SHADER ---
+// This shader removes the green background and crops the video into a circle
+AFRAME.registerShader('chromakey', {
+  schema: {
+    src: {type: 'map'},
+    color: {type: 'color', default: '#00FF00'},
+    [cite_start]threshold: {type: 'number', default: 0.3}, [cite: 1]
+    [cite_start]smoothness: {type: 'number', default: 0.05} [cite: 1]
+  },
+  init: function(data) {
+    const videoTexture = new THREE.VideoTexture(data.src);
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        tex: {value: videoTexture},
+        [cite_start]keyColor: {value: new THREE.Color(data.color)}, [cite: 3]
+        [cite_start]similarity: {value: data.threshold}, [cite: 3]
+        [cite_start]smoothness: {value: data.smoothness} [cite: 3]
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
-
-    } catch (err) {
-        loadingMsg.innerText = "Error: Check Folder Permissions.";
-        console.error(err);
+      `,
+      fragmentShader: `
+        uniform sampler2D tex;
+        uniform vec3 keyColor;
+        uniform float similarity;
+        uniform float smoothness;
+        varying vec2 vUv;
+        void main() {
+          vec4 videoColor = texture2D(tex, vUv);
+          float dist = distance(videoColor.rgb, keyColor);
+          
+          // Circle Crop Logic: Center is 0.5, 0.5
+          float dToCenter = distance(vUv, vec2(0.5, 0.5));
+          
+          [cite_start]// Alpha transition using smoothstep for cleaner edges [cite: 4]
+          float alpha = smoothstep(similarity, similarity + smoothness, dist);
+          
+          [cite_start]// Discard pixels if they match the key color or are outside the circle radius [cite: 5]
+          if (alpha < 0.1 || dToCenter > 0.5) {
+            discard;
+          }
+          gl_FragColor = vec4(videoColor.rgb, alpha);
+        }
+      `,
+      transparent: true
+    });
+  },
+  update: function(data) {
+    if (this.material) {
+      [cite_start]this.material.uniforms.similarity.value = data.threshold; [cite: 7]
+      this.material.uniforms.smoothness.value = data.smoothness;
+      [cite_start]this.material.uniforms.keyColor.value = new THREE.Color(data.color); [cite: 7]
     }
+  }
+});
+
+// --- 2. GOOGLE DRIVE INTEGRATION ---
+// Fetches the latest MP4 file from your specified folder
+async function loadDriveVideo() {
+  try {
+    if (toast) toast.textContent = "Connecting to Drive...";
+
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType='video/mp4'&key=${API_KEY}`
+    );
+    const data = await response.json();
+
+    if (data.files && data.files.length > 0) {
+      const fileId = data.files[0].id;
+      [cite_start]// Direct media link for streaming [cite: 8]
+      const streamUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`;
+      
+      videoEl.src = streamUrl;
+      videoEl.load();
+      
+      if (toast) {
+        toast.textContent = "Video Linked: " + data.files[0].name;
+        setTimeout(() => toast.style.display = 'none', 3000);
+      }
+    } else {
+      if (toast) toast.textContent = "Error: No MP4 found in Drive folder.";
+    }
+  } catch (error) {
+    if (toast) toast.textContent = "Drive Connection Failed.";
+    console.error("Drive Fetch Error:", error);
+  }
 }
 
-// ===============================
-// 3. PERFECT ASPECT RATIO CIRCLE SHADER
-// ===============================
-AFRAME.registerShader('perfect-circle-video', {
-
-    schema: { src: { type: 'map' } },
-
-    init: function (data) {
-
-        this.videoTexture = new THREE.VideoTexture(data.src);
-
-        this.material = new THREE.ShaderMaterial({
-            uniforms: {
-                tex: { value: this.videoTexture },
-                aspectRatio: { value: 1.0 }
-            },
-            vertexShader: `
-                varying vec2 vUv;
-                void main() {
-                    vUv = uv;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                }
-            `,
-            fragmentShader: `
-                uniform sampler2D tex;
-                uniform float aspectRatio;
-                varying vec2 vUv;
-
-                void main() {
-
-                    vec2 uv = vUv;
-                    float videoAspect = aspectRatio;
-                    float circleAspect = 1.0;
-
-                    // FIT without distortion
-                    if (videoAspect > circleAspect) {
-                        float scale = circleAspect / videoAspect;
-                        uv.y = (uv.y - 0.5) * scale + 0.5;
-                    } else {
-                        float scale = videoAspect / circleAspect;
-                        uv.x = (uv.x - 0.5) * scale + 0.5;
-                    }
-
-                    // Circular mask
-                    if (distance(vUv, vec2(0.5, 0.5)) > 0.5) {
-                        discard;
-                    }
-
-                    gl_FragColor = texture2D(tex, uv);
-                }
-            `,
-            transparent: true
-        });
-    },
-
-    tick: function () {
-        if (this.videoTexture && this.videoTexture.image) {
-            this.videoTexture.needsUpdate = true;
-
-            const video = this.videoTexture.image;
-
-            if (video.videoWidth > 0 && video.videoHeight > 0) {
-                this.material.uniforms.aspectRatio.value =
-                    video.videoWidth / video.videoHeight;
-            }
-        }
-    }
+// --- 3. UI & AR EVENT LISTENERS ---
+target.addEventListener('targetFound', () => {
+  buttonsContainer.style.display = 'block';
 });
 
-// ===============================
-// 4. APPLY NEW SHADER TO CIRCLE
-// ===============================
-videoDisplay.setAttribute(
-    'material',
-    'shader: perfect-circle-video; src: #plan1Video; transparent: true; side: double;'
-);
-
-// ===============================
-// 5. AR CONTROLS
-// ===============================
-
-entryBtn.addEventListener('click', () => {
-    overlay.style.display = 'none';
-
-    if (sceneEl.systems["mindar-image-system"]) {
-        sceneEl.systems["mindar-image-system"].start();
-    }
-});
-
-document.querySelector('#target1').addEventListener('targetFound', () => {
-    planButtons.style.display = 'block';
-});
-
-document.querySelector('#target1').addEventListener('targetLost', () => {
-    planButtons.style.display = 'none';
-    videoEl.pause();
-    isPlaying = false;
-    toggleButton.textContent = "▶️ Play Video";
+target.addEventListener('targetLost', () => {
+  buttonsContainer.style.display = 'none';
+  videoEl.pause();
+  isPlaying = false;
+  toggleButton.textContent = "▶️ Play Video";
 });
 
 toggleButton.addEventListener('click', async () => {
-
-    if (!isPlaying) {
-
-        videoEl.muted = false;
-        await videoEl.play();
-
-        isPlaying = true;
-        toggleButton.textContent = "⏸ Pause Video";
-
-    } else {
-
-        videoEl.pause();
-        isPlaying = false;
-        toggleButton.textContent = "▶️ Play Video";
+  if (!isPlaying) {
+    try {
+      await videoEl.play();
+      isPlaying = true;
+      toggleButton.textContent = "⏸ Pause Video";
+    } catch (err) {
+      console.error("Playback failed:", err);
     }
+  } else {
+    videoEl.pause();
+    isPlaying = false;
+    toggleButton.textContent = "▶️ Play Video";
+  }
 });
 
-// ===============================
-// 6. INITIAL LOAD
-// ===============================
-loadLatestVideo();
+// Disable right-click to protect the UI
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// Run the Drive loader
+loadDriveVideo();
