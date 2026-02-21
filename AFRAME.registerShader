@@ -1,0 +1,50 @@
+AFRAME.registerShader('chromakey', {
+  schema: {
+    src: {type: 'map'},
+    color: {type: 'color', default: '#00FF00'},
+    threshold: {type: 'number', default: 0.3}, // Increased from 0.1
+    smoothness: {type: 'number', default: 0.05} // Added for better edges
+  },
+  init: function(data) {
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        tex: {value: null},
+        keyColor: {value: new THREE.Color(data.color)},
+        similarity: {value: data.threshold},
+        smoothness: {value: data.smoothness}
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tex;
+        uniform vec3 keyColor;
+        uniform float similarity;
+        uniform float smoothness;
+        varying vec2 vUv;
+        void main() {
+          vec4 videoColor = texture2D(tex, vUv);
+          float diff = distance(videoColor.rgb, keyColor);
+          
+          // Smooth step creates a cleaner alpha transition
+          float alpha = smoothstep(similarity, similarity + smoothness, diff);
+          
+          if (alpha < 0.1) discard; 
+          
+          gl_FragColor = vec4(videoColor.rgb, alpha);
+        }
+      `,
+      transparent: true
+    });
+  },
+  update: function(data) {
+    this.material.uniforms.tex.value = data.src;
+    this.material.uniforms.similarity.value = data.threshold;
+    this.material.uniforms.smoothness.value = data.smoothness;
+    this.material.uniforms.keyColor.value = new THREE.Color(data.color);
+  }
+});
