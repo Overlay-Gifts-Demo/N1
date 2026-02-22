@@ -1,213 +1,173 @@
-/**
- * JEWELS-AI | FINAL STABLE AR VIDEO ENGINE
- * Production Ready
- */
+// ===============================
+// JEWELS-AI AR VIDEO ENGINE v2.0
+// Aspect Ratio Fixed (No Squash)
+// ===============================
 
-/* ===============================
-   CONFIGURATION
-================================ */
+// --- 1. CONFIGURATION ---
 const API_KEY = "AIzaSyC35sqqZA1YaxZ-F4PJaDqQpKBxPyMKOzw";
 const FOLDER_ID = "1fDj4lVzWcrXJnIQnljrC4-_SBEEV1dlz";
 
-const videoEl = document.querySelector('#driveVideo');
-const toast = document.querySelector('#status-toast');
-const buttonsContainer = document.querySelector('#planButtons');
-const toggleButton = document.querySelector('#toggleButton');
-const target = document.querySelector('#target1');
+const videoEl = document.querySelector('#plan1Video');
+const loadingMsg = document.querySelector('#loadingMsg');
+const entryBtn = document.querySelector('#entryBtn');
+const overlay = document.querySelector('#overlay');
 const sceneEl = document.querySelector('a-scene');
+const toggleButton = document.querySelector('#toggleButton');
+const planButtons = document.querySelector('#planButtons');
+const videoDisplay = document.querySelector('#videoDisplay');
 
 let isPlaying = false;
-let arStarted = false;
 
+// ===============================
+// 2. FETCH LATEST VIDEO FROM DRIVE
+// ===============================
+async function loadLatestVideo() {
 
-/* ===============================
-   CHROMA KEY + CIRCLE SHADER
-================================ */
-AFRAME.registerShader('chromakey', {
+    const listUrl = `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType+contains+'video/'&orderBy=createdTime+desc&fields=files(id,name)&key=${API_KEY}`;
 
-  schema: {
-    src: { type: 'map' },
-    color: { type: 'color', default: '#00FF00' },
-    threshold: { type: 'number', default: 0.3 },
-    smoothness: { type: 'number', default: 0.05 }
-  },
+    try {
+        const listResponse = await fetch(listUrl);
+        const listData = await listResponse.json();
 
-  init: function (data) {
+        if (listData.files && listData.files.length > 0) {
 
-    this.videoTexture = new THREE.VideoTexture(data.src);
-    this.videoTexture.minFilter = THREE.LinearFilter;
-    this.videoTexture.magFilter = THREE.LinearFilter;
-    this.videoTexture.generateMipmaps = false;
+            const fileId = listData.files[0].id;
 
-    this.material = new THREE.ShaderMaterial({
+            videoEl.src = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`;
+            videoEl.load();
 
-      uniforms: {
-        tex: { value: this.videoTexture },
-        keyColor: { value: new THREE.Color(data.color) },
-        similarity: { value: data.threshold },
-        smoothness: { value: data.smoothness }
-      },
+            loadingMsg.innerText = "Gift Ready!";
+            entryBtn.style.display = "inline-block";
 
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix *
-                        modelViewMatrix *
-                        vec4(position, 1.0);
+        } else {
+            loadingMsg.innerText = "No videos found in Drive.";
         }
-      `,
 
-      fragmentShader: `
-        uniform sampler2D tex;
-        uniform vec3 keyColor;
-        uniform float similarity;
-        uniform float smoothness;
-        varying vec2 vUv;
-
-        void main() {
-
-          vec4 videoColor = texture2D(tex, vUv);
-
-          float dist = distance(videoColor.rgb, keyColor);
-          float dToCenter = distance(vUv, vec2(0.5, 0.5));
-          float alpha = smoothstep(similarity, similarity + smoothness, dist);
-
-          if (alpha < 0.1 || dToCenter > 0.5) discard;
-
-          gl_FragColor = vec4(videoColor.rgb, alpha);
-        }
-      `,
-      transparent: true
-    });
-  },
-
-  // 🔥 CRITICAL: prevents black freeze
-  tick: function () {
-    if (this.videoTexture) {
-      this.videoTexture.needsUpdate = true;
+    } catch (err) {
+        loadingMsg.innerText = "Error: Check Folder Permissions.";
+        console.error(err);
     }
-  }
+}
+
+// ===============================
+// 3. PERFECT ASPECT RATIO CIRCLE SHADER
+// ===============================
+AFRAME.registerShader('perfect-circle-video', {
+
+    schema: { src: { type: 'map' } },
+
+    init: function (data) {
+
+        this.videoTexture = new THREE.VideoTexture(data.src);
+
+        this.material = new THREE.ShaderMaterial({
+            uniforms: {
+                tex: { value: this.videoTexture },
+                aspectRatio: { value: 1.0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tex;
+                uniform float aspectRatio;
+                varying vec2 vUv;
+
+                void main() {
+
+                    vec2 uv = vUv;
+                    float videoAspect = aspectRatio;
+                    float circleAspect = 1.0;
+
+                    // FIT without distortion
+                    if (videoAspect > circleAspect) {
+                        float scale = circleAspect / videoAspect;
+                        uv.y = (uv.y - 0.5) * scale + 0.5;
+                    } else {
+                        float scale = videoAspect / circleAspect;
+                        uv.x = (uv.x - 0.5) * scale + 0.5;
+                    }
+
+                    // Circular mask
+                    if (distance(vUv, vec2(0.5, 0.5)) > 0.5) {
+                        discard;
+                    }
+
+                    gl_FragColor = texture2D(tex, uv);
+                }
+            `,
+            transparent: true
+        });
+    },
+
+    tick: function () {
+        if (this.videoTexture && this.videoTexture.image) {
+            this.videoTexture.needsUpdate = true;
+
+            const video = this.videoTexture.image;
+
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+                this.material.uniforms.aspectRatio.value =
+                    video.videoWidth / video.videoHeight;
+            }
+        }
+    }
 });
 
+// ===============================
+// 4. APPLY NEW SHADER TO CIRCLE
+// ===============================
+videoDisplay.setAttribute(
+    'material',
+    'shader: perfect-circle-video; src: #plan1Video; transparent: true; side: double;'
+);
 
-/* ===============================
-   GOOGLE DRIVE VIDEO LOADER
-================================ */
-async function loadDriveVideo() {
+// ===============================
+// 5. AR CONTROLS
+// ===============================
 
-  try {
+entryBtn.addEventListener('click', () => {
+    overlay.style.display = 'none';
 
-    if (toast) toast.textContent = "Connecting to Drive...";
-
-    const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType='video/mp4'&fields=files(id,name)&orderBy=createdTime desc&key=${API_KEY}`
-    );
-
-    const data = await response.json();
-
-    if (!data.files || data.files.length === 0) {
-      if (toast) toast.textContent = "No MP4 found in Drive folder.";
-      return;
+    if (sceneEl.systems["mindar-image-system"]) {
+        sceneEl.systems["mindar-image-system"].start();
     }
+});
 
-    const fileId = data.files[0].id;
+document.querySelector('#target1').addEventListener('targetFound', () => {
+    planButtons.style.display = 'block';
+});
 
-    // ✅ IMPORTANT: Use public download link (fix black video)
-    videoEl.src = `https://drive.google.com/uc?export=download&id=${fileId}`;
-    videoEl.crossOrigin = "anonymous";
-    videoEl.muted = true;
-    videoEl.preload = "auto";
-    videoEl.load();
-
-    videoEl.addEventListener("loadeddata", async () => {
-
-      // Force first frame render
-      videoEl.currentTime = 0.01;
-
-      if (toast) toast.textContent = "Video Ready ✔";
-
-      // ✅ Correct MindAR system
-      if (!arStarted && sceneEl.systems["mindar-image"]) {
-        await sceneEl.systems["mindar-image"].start();
-        arStarted = true;
-      }
-
-      setTimeout(() => {
-        if (toast) toast.style.display = "none";
-      }, 2000);
-
-    }, { once: true });
-
-  } catch (error) {
-
-    if (toast) toast.textContent = "Drive Connection Failed.";
-    console.error("Drive Error:", error);
-  }
-}
-
-
-/* ===============================
-   TARGET EVENTS
-================================ */
-if (target) {
-
-  target.addEventListener("targetFound", () => {
-    if (buttonsContainer) buttonsContainer.style.display = "block";
-  });
-
-  target.addEventListener("targetLost", () => {
-
-    if (buttonsContainer) buttonsContainer.style.display = "none";
-
+document.querySelector('#target1').addEventListener('targetLost', () => {
+    planButtons.style.display = 'none';
     videoEl.pause();
     isPlaying = false;
+    toggleButton.textContent = "▶️ Play Video";
+});
 
-    if (toggleButton)
-      toggleButton.textContent = "▶️ Play Video";
-  });
-}
-
-
-/* ===============================
-   PLAY / PAUSE BUTTON
-================================ */
-if (toggleButton) {
-
-  toggleButton.addEventListener("click", async () => {
+toggleButton.addEventListener('click', async () => {
 
     if (!isPlaying) {
 
-      try {
-        await videoEl.play();   // play muted first
-        videoEl.muted = false;  // unmute after user interaction
+        videoEl.muted = false;
+        await videoEl.play();
 
         isPlaying = true;
         toggleButton.textContent = "⏸ Pause Video";
 
-      } catch (err) {
-        console.error("Playback blocked:", err);
-      }
-
     } else {
 
-      videoEl.pause();
-      isPlaying = false;
-      toggleButton.textContent = "▶️ Play Video";
+        videoEl.pause();
+        isPlaying = false;
+        toggleButton.textContent = "▶️ Play Video";
     }
+});
 
-  });
-
-}
-
-
-/* ===============================
-   UI PROTECTION
-================================ */
-document.addEventListener("contextmenu", (e) => e.preventDefault());
-
-
-/* ===============================
-   START ENGINE
-================================ */
-loadDriveVideo();
+// ===============================
+// 6. INITIAL LOAD
+// ===============================
+loadLatestVideo();
