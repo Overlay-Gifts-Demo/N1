@@ -3,59 +3,63 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>JEWELS-AI | Fast AR Video</title>
+<title>JEWELS-AI | AR Drive Video</title>
 
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
 <style>
-  body { margin: 0; font-family: 'Poppins', sans-serif; background: #000; overflow: hidden; }
-  .button-panel { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: none; z-index: 100; }
-  .plan-button { padding: 12px 24px; font-size: 15px; font-weight: bold; border: none; border-radius: 8px; background-color: #5E0F8B; color: #fff; cursor: pointer; min-width: 160px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-  #status-toast { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.6); color: white; padding: 8px 15px; border-radius: 5px; font-size: 12px; z-index: 1000; }
+body { margin:0; background:#000; overflow:hidden; font-family:Poppins, sans-serif; }
+.button-panel { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); display:none; z-index:100; }
+.plan-button { padding:12px 24px; font-size:15px; font-weight:bold; border:none; border-radius:8px; background:#5E0F8B; color:#fff; cursor:pointer; min-width:160px; }
+#status-toast { position:absolute; top:20px; left:20px; background:rgba(0,0,0,0.6); color:#fff; padding:8px 15px; border-radius:5px; font-size:12px; z-index:1000; }
 </style>
 </head>
 
 <body>
 
-<div id="status-toast">Initializing...</div>
+<div id="status-toast">Connecting to Drive...</div>
 
 <div class="button-panel" id="planButtons">
-  <button class="plan-button" id="toggleButton">▶️ Play Video</button>
+<button class="plan-button" id="toggleButton">▶️ Play Video</button>
 </div>
 
-<a-scene
-  mindar-image="imageTargetSrc: ./targets.mind; autoStart: false;"
-  vr-mode-ui="enabled: false"
-  device-orientation-permission-ui="enabled: false">
+<a-scene 
+mindar-image="imageTargetSrc: ./targets.mind"
+vr-mode-ui="enabled: false"
+device-orientation-permission-ui="enabled: false"
+embedded
+renderer="colorManagement:true; physicallyCorrectLights:true;">
 
-  <a-assets>
-    <video
-      id="driveVideo"
-      playsinline
-      webkit-playsinline
-      preload="metadata"
-      muted
-      crossorigin="anonymous">
-    </video>
-  </a-assets>
+<a-assets>
+<video id="driveVideo"
+playsinline
+webkit-playsinline
+muted
+preload="auto"
+loop
+crossorigin="anonymous">
+</video>
+</a-assets>
 
-  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+<a-camera position="0 0 0" look-controls="enabled:false"></a-camera>
 
-  <a-entity id="target1" mindar-image-target="targetIndex: 0">
-    <a-circle
-      radius="0.5"
-      position="0 0 0"
-      material="shader: chromakey; src: #driveVideo; color: #00FF00; threshold: 0.3; smoothness: 0.05; side: double; transparent: true">
-    </a-circle>
-  </a-entity>
+<a-entity id="target1" mindar-image-target="targetIndex: 0">
+<a-circle
+id="videoDisplay"
+radius="0.5"
+position="0 0 0"
+material="shader: chromakey; src: #driveVideo; color: #00FF00; threshold: 0.3; smoothness: 0.05; side: double; transparent: true">
+</a-circle>
+</a-entity>
 
 </a-scene>
 
 <script>
+
 /* ===============================
-   CONFIG
-================================ */
+CONFIG
+=============================== */
 const API_KEY = "AIzaSyC35sqqZA1YaxZ-F4PJaDqQpKBxPyMKOzw";
 const FOLDER_ID = "1fDj4lVzWcrXJnIQnljrC4-_SBEEV1dlz";
 
@@ -64,152 +68,145 @@ const toast = document.querySelector('#status-toast');
 const buttonsContainer = document.querySelector('#planButtons');
 const toggleButton = document.querySelector('#toggleButton');
 const target = document.querySelector('#target1');
+const sceneEl = document.querySelector('a-scene');
 
 let isPlaying = false;
+let arStarted = false;
 
 /* ===============================
-   OPTIMIZED CHROMA KEY SHADER
-================================ */
+FIXED CHROMAKEY SHADER
+=============================== */
 AFRAME.registerShader('chromakey', {
-  schema: {
-    src: {type: 'map'},
-    color: {type: 'color', default: '#00FF00'},
-    threshold: {type: 'number', default: 0.3},
-    smoothness: {type: 'number', default: 0.05}
-  },
+schema: {
+src: { type:'map' },
+color: { type:'color', default:'#00FF00' },
+threshold: { type:'number', default:0.3 },
+smoothness: { type:'number', default:0.05 }
+},
 
-  init: function(data) {
-    const videoTexture = new THREE.VideoTexture(data.src);
+init: function(data){
 
-    // PERFORMANCE BOOST
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-    videoTexture.format = THREE.RGBFormat;
+this.videoTexture = new THREE.VideoTexture(data.src);
+this.videoTexture.minFilter = THREE.LinearFilter;
+this.videoTexture.magFilter = THREE.LinearFilter;
+this.videoTexture.generateMipmaps = false;
 
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        tex: {value: videoTexture},
-        keyColor: {value: new THREE.Color(data.color)},
-        similarity: {value: data.threshold},
-        smoothness: {value: data.smoothness}
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D tex;
-        uniform vec3 keyColor;
-        uniform float similarity;
-        uniform float smoothness;
-        varying vec2 vUv;
+this.material = new THREE.ShaderMaterial({
+uniforms:{
+tex:{ value:this.videoTexture },
+keyColor:{ value:new THREE.Color(data.color) },
+similarity:{ value:data.threshold },
+smoothness:{ value:data.smoothness }
+},
+vertexShader:`
+varying vec2 vUv;
+void main(){
+vUv = uv;
+gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+}`,
+fragmentShader:`
+uniform sampler2D tex;
+uniform vec3 keyColor;
+uniform float similarity;
+uniform float smoothness;
+varying vec2 vUv;
+void main(){
+vec4 videoColor = texture2D(tex, vUv);
+float dist = distance(videoColor.rgb, keyColor);
+float dToCenter = distance(vUv, vec2(0.5,0.5));
+float alpha = smoothstep(similarity, similarity+smoothness, dist);
+if(alpha < 0.1 || dToCenter > 0.5) discard;
+gl_FragColor = vec4(videoColor.rgb, alpha);
+}`,
+transparent:true
+});
+},
 
-        void main() {
-          vec4 videoColor = texture2D(tex, vUv);
-          float dist = distance(videoColor.rgb, keyColor);
-          float dToCenter = distance(vUv, vec2(0.5, 0.5));
-          float alpha = smoothstep(similarity, similarity + smoothness, dist);
-
-          if (alpha < 0.1 || dToCenter > 0.5) discard;
-
-          gl_FragColor = vec4(videoColor.rgb, alpha);
-        }
-      `,
-      transparent: true
-    });
-  }
+// 🔥 THIS FIXES BLACK VIDEO
+tick:function(){
+if(this.videoTexture){
+this.videoTexture.needsUpdate = true;
+}
+}
 });
 
 /* ===============================
-   FASTER DRIVE LOADING
-================================ */
-async function loadDriveVideo() {
-  try {
-    toast.textContent = "Connecting to Drive...";
+LOAD DRIVE VIDEO
+=============================== */
+async function loadDriveVideo(){
+try{
 
-    const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType='video/mp4'&fields=files(id,name)&key=${API_KEY}`
-    );
+const response = await fetch(
+`https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType='video/mp4'&fields=files(id,name)&orderBy=createdTime desc&key=${API_KEY}`
+);
 
-    const data = await response.json();
+const data = await response.json();
 
-    if (!data.files || data.files.length === 0) {
-      toast.textContent = "No MP4 found.";
-      return;
-    }
-
-    const fileId = data.files[0].id;
-    const streamUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`;
-
-    videoEl.src = streamUrl;
-
-    videoEl.addEventListener("loadeddata", async () => {
-
-      // SHOW FIRST FRAME INSTEAD OF BLACK
-      videoEl.currentTime = 0.01;
-
-      toast.textContent = "Video Ready ✔";
-
-      // START AR ONLY AFTER VIDEO READY (MAJOR SPEED BOOST)
-      const sceneEl = document.querySelector('a-scene');
-      await sceneEl.systems["mindar-image-system"].start();
-
-      setTimeout(() => toast.style.display = "none", 2000);
-    });
-
-  } catch (error) {
-    toast.textContent = "Drive Connection Failed.";
-    console.error(error);
-  }
+if(!data.files || data.files.length === 0){
+toast.textContent = "No MP4 Found";
+return;
 }
 
-/* ===============================
-   AR EVENTS
-================================ */
-target.addEventListener('targetFound', () => {
-  buttonsContainer.style.display = 'block';
-});
+const fileId = data.files[0].id;
 
-target.addEventListener('targetLost', () => {
-  buttonsContainer.style.display = 'none';
-  videoEl.pause();
-  isPlaying = false;
-  toggleButton.textContent = "▶️ Play Video";
-});
+// 🔥 IMPORTANT: Public Drive Link (Fix Black Screen)
+videoEl.src = `https://drive.google.com/uc?export=download&id=${fileId}`;
+videoEl.load();
 
-/* ===============================
-   PLAY BUTTON
-================================ */
-toggleButton.addEventListener('click', async () => {
-  if (!isPlaying) {
-    try {
-      await videoEl.play();
-      isPlaying = true;
-      toggleButton.textContent = "⏸ Pause Video";
-    } catch (err) {
-      console.error("Playback failed:", err);
-    }
-  } else {
-    videoEl.pause();
-    isPlaying = false;
-    toggleButton.textContent = "▶️ Play Video";
-  }
-});
+videoEl.addEventListener("loadeddata", async ()=>{
 
-/* ===============================
-   SECURITY
-================================ */
-document.addEventListener("contextmenu", (e) => e.preventDefault());
+videoEl.currentTime = 0.01;
+toast.textContent = "Video Ready ✔";
 
-/* ===============================
-   START PROCESS
-================================ */
+if(!arStarted && sceneEl.systems["mindar-image"]){
+await sceneEl.systems["mindar-image"].start();
+arStarted = true;
+}
+
+setTimeout(()=>{ toast.style.display="none"; },2000);
+
+},{ once:true });
+
+}catch(err){
+toast.textContent = "Drive Failed";
+console.error(err);
+}
+}
+
 loadDriveVideo();
 
-</script>
+/* ===============================
+AR EVENTS
+=============================== */
+target.addEventListener("targetFound", ()=>{
+buttonsContainer.style.display="block";
+});
 
+target.addEventListener("targetLost", ()=>{
+buttonsContainer.style.display="none";
+videoEl.pause();
+isPlaying=false;
+toggleButton.textContent="▶️ Play Video";
+});
+
+/* ===============================
+PLAY BUTTON
+=============================== */
+toggleButton.addEventListener("click", async ()=>{
+if(!isPlaying){
+await videoEl.play();
+videoEl.muted=false;
+isPlaying=true;
+toggleButton.textContent="⏸ Pause Video";
+}else{
+videoEl.pause();
+isPlaying=false;
+toggleButton.textContent="▶️ Play Video";
+}
+});
+
+document.addEventListener("contextmenu",(e)=>e.preventDefault());
+
+</script>
 </body>
 </html>

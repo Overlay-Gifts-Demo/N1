@@ -1,6 +1,6 @@
 /**
- * JEWELS-AI | FAST AR VIDEO ENGINE
- * Optimized for speed + first frame thumbnail + smooth AR startup
+ * JEWELS-AI | FINAL STABLE AR VIDEO ENGINE
+ * Production Ready
  */
 
 /* ===============================
@@ -14,14 +14,17 @@ const toast = document.querySelector('#status-toast');
 const buttonsContainer = document.querySelector('#planButtons');
 const toggleButton = document.querySelector('#toggleButton');
 const target = document.querySelector('#target1');
+const sceneEl = document.querySelector('a-scene');
 
 let isPlaying = false;
 let arStarted = false;
 
+
 /* ===============================
-   OPTIMIZED CHROMA KEY SHADER
+   CHROMA KEY + CIRCLE SHADER
 ================================ */
 AFRAME.registerShader('chromakey', {
+
   schema: {
     src: { type: 'map' },
     color: { type: 'color', default: '#00FF00' },
@@ -30,17 +33,16 @@ AFRAME.registerShader('chromakey', {
   },
 
   init: function (data) {
-    const videoTexture = new THREE.VideoTexture(data.src);
 
-    // PERFORMANCE BOOST SETTINGS
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-    videoTexture.format = THREE.RGBFormat;
-    videoTexture.generateMipmaps = false;
+    this.videoTexture = new THREE.VideoTexture(data.src);
+    this.videoTexture.minFilter = THREE.LinearFilter;
+    this.videoTexture.magFilter = THREE.LinearFilter;
+    this.videoTexture.generateMipmaps = false;
 
     this.material = new THREE.ShaderMaterial({
+
       uniforms: {
-        tex: { value: videoTexture },
+        tex: { value: this.videoTexture },
         keyColor: { value: new THREE.Color(data.color) },
         similarity: { value: data.threshold },
         smoothness: { value: data.smoothness }
@@ -50,7 +52,9 @@ AFRAME.registerShader('chromakey', {
         varying vec2 vUv;
         void main() {
           vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix *
+                        modelViewMatrix *
+                        vec4(position, 1.0);
         }
       `,
 
@@ -62,6 +66,7 @@ AFRAME.registerShader('chromakey', {
         varying vec2 vUv;
 
         void main() {
+
           vec4 videoColor = texture2D(tex, vUv);
 
           float dist = distance(videoColor.rgb, keyColor);
@@ -75,49 +80,56 @@ AFRAME.registerShader('chromakey', {
       `,
       transparent: true
     });
+  },
+
+  // 🔥 CRITICAL: prevents black freeze
+  tick: function () {
+    if (this.videoTexture) {
+      this.videoTexture.needsUpdate = true;
+    }
   }
 });
 
+
 /* ===============================
-   GOOGLE DRIVE FAST LOADER
+   GOOGLE DRIVE VIDEO LOADER
 ================================ */
 async function loadDriveVideo() {
+
   try {
+
     if (toast) toast.textContent = "Connecting to Drive...";
 
     const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType='video/mp4'&fields=files(id,name)&key=${API_KEY}`
+      `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents+and+mimeType='video/mp4'&fields=files(id,name)&orderBy=createdTime desc&key=${API_KEY}`
     );
 
     const data = await response.json();
 
     if (!data.files || data.files.length === 0) {
-      if (toast) toast.textContent = "No MP4 found.";
+      if (toast) toast.textContent = "No MP4 found in Drive folder.";
       return;
     }
 
     const fileId = data.files[0].id;
 
-    const streamUrl =
-      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`;
+    // ✅ IMPORTANT: Use public download link (fix black video)
+    videoEl.src = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    videoEl.crossOrigin = "anonymous";
+    videoEl.muted = true;
+    videoEl.preload = "auto";
+    videoEl.load();
 
-    videoEl.src = streamUrl;
-    videoEl.preload = "metadata";
-
-    /* ===============================
-       FIRST FRAME THUMBNAIL FIX
-    ================================ */
     videoEl.addEventListener("loadeddata", async () => {
 
-      // Force render first frame
+      // Force first frame render
       videoEl.currentTime = 0.01;
 
       if (toast) toast.textContent = "Video Ready ✔";
 
-      // Start AR only after video is decoded
-      if (!arStarted) {
-        const sceneEl = document.querySelector("a-scene");
-        await sceneEl.systems["mindar-image-system"].start();
+      // ✅ Correct MindAR system
+      if (!arStarted && sceneEl.systems["mindar-image"]) {
+        await sceneEl.systems["mindar-image"].start();
         arStarted = true;
       }
 
@@ -128,13 +140,15 @@ async function loadDriveVideo() {
     }, { once: true });
 
   } catch (error) {
+
     if (toast) toast.textContent = "Drive Connection Failed.";
     console.error("Drive Error:", error);
   }
 }
 
+
 /* ===============================
-   AR TARGET EVENTS
+   TARGET EVENTS
 ================================ */
 if (target) {
 
@@ -143,6 +157,7 @@ if (target) {
   });
 
   target.addEventListener("targetLost", () => {
+
     if (buttonsContainer) buttonsContainer.style.display = "none";
 
     videoEl.pause();
@@ -151,8 +166,8 @@ if (target) {
     if (toggleButton)
       toggleButton.textContent = "▶️ Play Video";
   });
-
 }
+
 
 /* ===============================
    PLAY / PAUSE BUTTON
@@ -162,14 +177,20 @@ if (toggleButton) {
   toggleButton.addEventListener("click", async () => {
 
     if (!isPlaying) {
+
       try {
-        await videoEl.play();
+        await videoEl.play();   // play muted first
+        videoEl.muted = false;  // unmute after user interaction
+
         isPlaying = true;
         toggleButton.textContent = "⏸ Pause Video";
+
       } catch (err) {
         console.error("Playback blocked:", err);
       }
+
     } else {
+
       videoEl.pause();
       isPlaying = false;
       toggleButton.textContent = "▶️ Play Video";
@@ -179,10 +200,12 @@ if (toggleButton) {
 
 }
 
+
 /* ===============================
    UI PROTECTION
 ================================ */
 document.addEventListener("contextmenu", (e) => e.preventDefault());
+
 
 /* ===============================
    START ENGINE
